@@ -1,0 +1,83 @@
+
+name: AuditSystem Safe ZIP Inspection
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Inspect ZIP without modifying source
+        run: |
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+
+          archive = Path("AuditSystem_Phase72_Backup_Recovery.zip")
+          output = Path("audit_inspection")
+          output.mkdir(exist_ok=True)
+
+          if not archive.exists():
+              raise SystemExit("ERROR: Source ZIP not found")
+
+          allowed = (".py", ".md", ".txt", ".json", ".yml", ".yaml", ".toml", ".ini", ".sql")
+
+          with zipfile.ZipFile(archive) as z:
+              entries = z.infolist()
+              report = []
+
+              for item in entries:
+                  name = item.filename
+                  path = Path(name)
+
+                  if item.is_dir():
+                      continue
+
+                  if path.is_absolute() or ".." in path.parts:
+                      report.append(f"BLOCKED PATH: {name}")
+                      continue
+
+                  if any(x in name.lower() for x in (
+                      "password", "secret", "credential", ".env",
+                      "customer", "client", "financial_data"
+                  )):
+                      report.append(f"EXCLUDED SENSITIVE NAME: {name}")
+                      continue
+
+                  if path.suffix.lower() in allowed:
+                      report.append(
+                          f"CODE/TEXT CANDIDATE: {name} | {item.file_size} bytes"
+                      )
+                  else:
+                      report.append(
+                          f"EXCLUDED FILE: {name} | {item.file_size} bytes"
+                      )
+
+              (output / "manifest.txt").write_text(
+                  "\n".join(report), encoding="utf-8"
+              )
+
+              (output / "summary.txt").write_text(
+                  f"Archive: {archive.name}\n"
+                  f"Total entries: {len(entries)}\n"
+                  f"Inspection completed. No source files extracted or modified.\n",
+                  encoding="utf-8"
+              )
+
+          print("Inspection completed successfully.")
+          PY
+
+      - name: Upload inspection report
+        uses: actions/upload-artifact@v4
+        with:
+          name: AuditSystem-Inspection-Report
+          path: audit_inspection/
+          retention-days: 3
